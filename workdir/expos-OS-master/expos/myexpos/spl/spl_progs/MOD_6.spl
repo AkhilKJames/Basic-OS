@@ -1,0 +1,219 @@
+//FINAL VERSION
+///////// PAGER MODULE //////////
+
+alias funcno R1;
+alias currpid R2;
+
+
+
+//FINAL VERSION
+//swap out function
+if (funcno == 1) then
+	[SYSTEM_STATUS_TABLE + 5] = currpid;
+
+	alias count R3;
+	alias swap_pid R4;
+	count = 3;	//it cannot be idle, init or shell
+	//find a process in wait process state
+	while (count<16) do 
+		if ([PROCESS_TABLE + 16*count + 4] == WAIT_PROCESS) then
+			break;
+		endif;
+		count = count+1;
+	endwhile;
+
+	//if not found, find a process in wait terminal state
+	if (count == 16) then
+		count = 3;
+		while (count<16) do 
+			if ([PROCESS_TABLE + 16*count + 4] == WAIT_TERMINAL) then
+				break;
+			endif;
+			count = count+1;
+		endwhile;
+	endif;
+
+	//else find non swapped, non running process with maximum tick
+	if (count==16) then
+		count = 3;
+		alias pid R5;
+		alias max_tick R6;
+		max_tick = 0;
+		while (count<16) do
+			alias pte R7;
+			pte = PROCESS_TABLE + 16*count; 
+			if ([pte] > max_tick && count!=currpid && [pte+6]==0) then
+				max_tick = [pte];
+				pid = count;
+			endif;
+			count = count+1;
+		endwhile;
+		count = pid;
+	endif;
+
+	swap_pid = count;
+	[PROCESS_TABLE + 16*swap_pid] = 0;	//reset tick field
+
+	alias swap_block_no R8;
+	alias pgte R9;
+	pgte = PAGE_TABLE_BASE + 20*swap_pid;
+
+	//for all the pages
+	count = 2;
+	while (count<11) do 
+		//if the page is valid
+		if (count==10 || ([pgte + 2*count] != -1)) then
+			if ((count<4 && [MEMORY_FREE_LIST+[pgte+2*count]]==1) || count>7) then
+				//call get_swap_block in memory manager module
+				multipush (R1,R2,R3,R4,R5,R6,R7,R8,R9);
+				R1 = 6;
+				call MOD_2;
+				multipop (R1,R2,R3,R4,R5,R6,R7,R8,R9);
+				swap_block_no = R0;
+
+				//store disk block number in disk map table
+				[DISK_MAP_TABLE + 10*swap_pid + count%10] = swap_block_no;
+
+				//call disk store in device maanger module
+				backup;
+				R1 = 1;
+				R2 = [SYSTEM_STATUS_TABLE+1];
+				if (count != 10) then
+					R3 = [pgte + 2*count];
+				else
+					R3 = [PROCESS_TABLE + 16*swap_pid + 11];
+				endif;
+				R4 = swap_block_no;
+				call MOD_4;
+				restore;
+			endif;
+
+			//call release page in memory manager module
+			if (count>3 || [MEMORY_FREE_LIST+[pgte+2*count]] == 1) then
+				backup;
+				R1 = 2;
+				R2 = [pgte+ 2*count];
+				call MOD_2;
+				restore;
+				if (count!=10) then
+					[pgte + 2*count] = -1;
+					[pgte + 2*count + 1] = "0000";
+				else
+					[PROCESS_TABLE + 16*swap_pid + 11] = -1;
+				endif;
+			endif;
+		endif;
+		count = count + 1;
+	endwhile;
+
+	//set swap field to 1
+	[PROCESS_TABLE + 16*swap_pid + 6] = 1;
+
+	[SYSTEM_STATUS_TABLE+4] = [SYSTEM_STATUS_TABLE+4] + 1;
+	[SYSTEM_STATUS_TABLE+5] = -1;
+	return;
+endif;
+
+
+//FINAL VERWSION
+//swap in
+if (funcno==2) then
+
+	//if there are processes waiting for memory or if swapped count is zero, return
+	if ([SYSTEM_STATUS_TABLE+3]>0 || [SYSTEM_STATUS_TABLE+4]==0) then
+		return;
+	endif;
+
+//	print ("in1");
+	//set paging process field to current process id
+	[SYSTEM_STATUS_TABLE+5]=currpid;
+
+	alias max_tick R3;
+	alias count R4;
+	alias swap_pid R5;
+	swap_pid=-1;
+	count = 3;
+	max_tick=0;
+
+	//loop through all processes and find a swapped out ready process with max tick
+	while (count<16) do 
+		alias pte R6;
+		pte = PROCESS_TABLE + 16*count;
+		if ([pte+4]==READY && [pte+6]==1 && [pte]>max_tick) then
+			max_tick=[pte];
+			swap_pid=count;
+		endif;
+		count=count+1;
+	endwhile;
+
+
+
+	//if no such process exists, return
+	if (swap_pid == -1) then
+		[SYSTEM_STATUS_TABLE+5]=-1;
+		return;
+	endif;
+
+	//reset tick field of selected process
+	[PROCESS_TABLE + 16*swap_pid] = 0;
+	
+	count = 2;
+	while (count<11) do 
+		//if page is valid(heap or stack or user area page) and swapped out
+		if ((count<4 || count>7) && [DISK_MAP_TABLE + 10*swap_pid + count%10]!=-1) then
+		
+			//call get free page in memory manager module
+			multipush(R1,R2,R3,R4,R5,R6,R7);
+			R1=1;
+			call MOD_2;
+			multipop(R1,R2,R3,R4,R5,R6,R7);
+
+			alias swap_pageno R6;
+			swap_pageno = R0;
+
+			//call disk load in device manager module
+			backup;
+			R1 = 2;
+			R2 = currpid;
+			R3 = swap_pageno;
+			R4 = [DISK_MAP_TABLE + 10*swap_pid + count%10];
+			//print (R3);
+			//print (R4);
+			call MOD_4;
+			restore;
+
+			if (count<4 || count>7) then
+			//call release block in memory manager module
+			backup;
+			R1 = 4;
+			R2 = [DISK_MAP_TABLE + 10*swap_pid + count%10];
+			R3 = swap_pid;
+			call MOD_2;
+			restore;
+
+			//invalidate disk map table
+			[DISK_MAP_TABLE + 10*swap_pid + count%10]=-1;
+			endif;
+
+			if (count==10) then
+				//set process table entry for user area page
+				[PROCESS_TABLE + 16*swap_pid + 11] = swap_pageno;
+			else
+				//set page table entries
+				[PAGE_TABLE_BASE + 20*swap_pid + 2*count] = swap_pageno;
+				[PAGE_TABLE_BASE + 20*swap_pid + 2*count +1] = "0110";
+			endif;
+		endif;
+		count = count + 1;
+
+	endwhile;
+
+	//reset swap flag
+	[PROCESS_TABLE + 16*swap_pid + 6] = 0;
+
+	//decrement swap count and reset paging process field in system status table
+	[SYSTEM_STATUS_TABLE+4] = [SYSTEM_STATUS_TABLE+4] - 1;
+	[SYSTEM_STATUS_TABLE+5] = -1;
+//		print ("in2");
+	return;
+endif;

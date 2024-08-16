@@ -1,0 +1,86 @@
+
+////////EXCEPTION HANDLER//////////
+
+//set mode flag to -1
+[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 9] = -1;
+
+
+
+//switch to kernel stack
+[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13] = SP;
+SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 11]*512 - 1;
+
+
+
+multipush (EIP);
+
+backup;
+
+if (EC != 0) then 	//if cause is anything other than page falut
+	backup;
+	if (EC==1) then
+		print "ILLEG INSTR";
+	else
+	if (EC==2) then
+		print "ILLEG MEM_ACC";
+	else
+	if (EC==3) then
+		print "ARITH_EX";
+	endif;
+	endif;
+	endif;
+	//call exit process
+	R1 = 3;
+	R2 = [SYSTEM_STATUS_TABLE + 1];
+	call MOD_1;
+	//call scheduler
+	call MOD_5;
+	restore;
+endif;
+
+
+//if page fault is caused due to code page
+if (EPN>=4 && EPN<=7) then
+	alias blockno R0;
+
+	blockno = [DISK_MAP_TABLE + 10*[SYSTEM_STATUS_TABLE+1] + EPN];
+
+
+	//call get code page function
+	backup;
+	R1 = 5;
+	R2 = [SYSTEM_STATUS_TABLE + 1];
+	R3 = blockno;
+	call MOD_2;
+	//set page table entries
+
+	breakpoint;
+
+	[PAGE_TABLE_BASE + 20*[SYSTEM_STATUS_TABLE + 1] + 2*EPN] = R0;
+	[PAGE_TABLE_BASE + 20*[SYSTEM_STATUS_TABLE + 1] + 2*EPN + 1] = "1100";
+	restore;
+endif;
+
+//if page fault is due to heap page
+if (EPN==2 || EPN==3) then
+	//call get free page function
+	backup;
+	R1 = 1;
+	call MOD_2;
+	[PAGE_TABLE_BASE + 20*[SYSTEM_STATUS_TABLE + 1] + 2*EPN] = R0;
+	[PAGE_TABLE_BASE + 20*[SYSTEM_STATUS_TABLE + 1] + 2*EPN + 1] = "1110";
+	restore;
+endif;
+
+restore;
+
+multipop(EIP);
+
+[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 9] = 0;
+
+SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13];
+
+SP=SP+1;
+[[PTBR + 2*(SP/512)]*512 + SP%512] = EIP;
+
+ireturn;

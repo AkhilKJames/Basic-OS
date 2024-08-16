@@ -1,0 +1,90 @@
+
+//////////WAIT, SIGNAL, GETPID, GETPPID  SYSTEM CALL/////////
+
+
+alias usersp R1;
+usersp = SP;
+
+//switch to kernel stack
+[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13] = SP;
+SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 11]*512 - 1;
+
+
+//find return address
+alias retadd R2;
+retadd = [PTBR + 2*(usersp - 1)/512]*512 + (usersp-1)%512;
+
+//get the system call number
+alias syscallno R3;
+syscallno = [[PTBR + 2*(usersp - 5)/512]*512 + (usersp-5)%512];
+
+//final version
+//if getpid is invoked
+if (syscallno == 11) then
+	
+	[retadd] = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 1];
+	SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13];
+	ireturn;
+endif;
+
+//final version
+//if getppid is invoked
+if (syscallno == 12) then
+	
+	[retadd] = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 2];
+	SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13];
+	ireturn;
+endif;
+
+//final version
+//if wait system call is invoked
+if (syscallno == 13) then
+
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 9] = 13;
+	alias pid R4;
+	pid = [[PTBR + 2*(usersp - 4)/512]*512 + (usersp-4)%512];
+
+	//check if pid is valid
+	if (pid==[SYSTEM_STATUS_TABLE + 1] || [PROCESS_TABLE + 16*pid + 4]==TERMINATED || pid<0 || pid>15) then
+		[retadd] = -1;	//return -1 (FAILURE)
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 9] = 0;	//reset mode flag
+		SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13];	//switch to user stack
+		ireturn;
+	endif;
+
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 4] = WAIT_PROCESS;	//set state to waiting for pid
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 5] = pid;
+
+	backup;
+	call MOD_5;
+	restore;
+
+	[retadd] = 0;	//return 0 (SUCCESS)
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 9] = 0;	//reset mode flag
+	SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13];	//switch to user stack
+	ireturn;
+endif;
+
+//final version
+//if signal system call is invoked
+if (syscallno == 14) then
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 9] = 14;
+	
+	alias count R4;
+	count = 0;
+	//loop through all process tables
+	while (count<16) do 
+		alias cpte R5;
+		cpte = PROCESS_TABLE + 16*count;
+		//if process with id count is waiting for current process
+		if ([cpte + 4]==WAIT_PROCESS && [cpte + 5]==[SYSTEM_STATUS_TABLE + 1]) then
+			[cpte + 4] = READY;	//change state to ready
+		endif;
+		count = count + 1;
+	endwhile;
+
+	[retadd] = 0;	//return 0 (SUCCESS)
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 9] = 0;	//reset mode flag
+	SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13];	//switch to user stack
+	ireturn;
+endif;

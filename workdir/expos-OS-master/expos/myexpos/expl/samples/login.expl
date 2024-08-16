@@ -1,0 +1,31 @@
+int main() 
+{
+decl
+	int temp,i;
+	str uname,pswd;
+enddecl
+
+begin
+	while (1==1) do 
+
+		temp = exposcall("Write", -2, "Enter uname");
+		temp = exposcall("Read", -1, uname);
+
+		temp = exposcall("Write", -2, "Enter pswd");
+		temp = exposcall("Read", -1, pswd);
+
+
+		temp = exposcall("Login", uname, pswd);
+
+
+		if (temp == -1) then
+			temp = exposcall("Write", -2, "Invalid!!");
+		else if (temp == -2) then
+			temp = exposcall("Write", -2, "Permsn denied");
+		endif;
+		endif;
+	endwhile;
+
+	return 0;
+end
+}

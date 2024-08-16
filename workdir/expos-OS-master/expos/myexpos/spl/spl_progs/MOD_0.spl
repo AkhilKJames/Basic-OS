@@ -1,0 +1,220 @@
+//FINAL VERSION
+////////RESOURCE MANAGER MODULE//////////
+
+alias funcno R1;
+
+//FINAL VERSION
+//check if acquire buffer is called
+if (funcno == 1) then	
+	alias bufferno R2;
+	alias currpid R3;
+	//while buffer is locked
+	while ([BUFFER_TABLE + 4*bufferno + 2] != -1) do 
+		[PROCESS_TABLE + 16*currpid + 4] = 	WAIT_BUFFER;
+		[PROCESS_TABLE + 16*currpid + 5] = bufferno;
+
+		backup;
+		call MOD_5;	//call schedular
+		restore;
+	endwhile;
+
+	[BUFFER_TABLE + 4*bufferno + 2] = currpid;
+	return;
+endif;
+
+
+//FINAL VERSION
+//check if release buffer is called
+if (funcno == 2) then	
+	alias bufferno R2;
+	alias currpid R3;
+	if (currpid != [BUFFER_TABLE + 4*bufferno + 2]) then
+		R0 = -1;
+		return;
+	endif;
+
+	[BUFFER_TABLE + 4*bufferno + 2] = -1;	//release the buffer 
+
+	alias count R4;
+	count = 0;
+	while(count<16) do 
+		if ([PROCESS_TABLE + 16*count + 4]==WAIT_BUFFER && [PROCESS_TABLE + 16*count + 5]==bufferno) then
+			[PROCESS_TABLE + 16*count + 4] = READY;
+		endif;
+		count = count + 1;
+	endwhile;
+
+	R0 = 0;
+	return;
+endif;
+
+
+//FINAL VERSION
+//check if acquire disk is called
+if (funcno == 3) then	
+	alias currpid R2;
+	while ([DISK_STATUS_TABLE] == 1) do 	//while disk is acquired
+		[PROCESS_TABLE + 16*currpid + 4] = WAIT_DISK;
+		
+		backup;
+		call MOD_5;
+		restore;
+	endwhile;
+
+	[DISK_STATUS_TABLE] = 1;
+	[DISK_STATUS_TABLE + 4] = currpid;
+	return;
+endif;
+
+//FINAL VERSION
+//check if acquire inode is called
+if (funcno == 4) then
+	alias inodeindex R2;
+	alias currpid R3;
+	//while inode is locked
+	while ([FILE_STATUS_TABLE + 4*inodeindex + 0] != -1) do 
+		[PROCESS_TABLE + 16*currpid + 4] = WAIT_FILE;
+		[PROCESS_TABLE + 16*currpid + 5] = inodeindex;
+
+		//call schedular
+		backup;
+		call MOD_5;
+		restore;
+	endwhile;
+
+	//if the file is deleted, return -1
+	if ([INODE_TABLE + 16*inodeindex + 1] == -1) then
+		R0 = -1;
+		return;
+	endif;
+
+	[FILE_STATUS_TABLE + 4*inodeindex + 0] = currpid;	//set the locking pid
+
+	R0 = 0;
+	return;
+endif;
+
+//FINAL VERSION
+//check if release inode is called
+if (funcno == 5) then
+	alias inodeindex R2;
+	alias currpid R3;
+
+	//if locking pid is not current pid
+	if (currpid != [FILE_STATUS_TABLE + 4*inodeindex + 0]) then
+		R0 = -1;
+		return;
+	endif;
+
+	[FILE_STATUS_TABLE + 4*inodeindex + 0] = -1;
+
+	alias count R4;
+	count = 0;
+	while(count < 16) do 
+		alias pte R5;
+		pte = PROCESS_TABLE + 16*count;
+		if ([pte+4]==WAIT_FILE && [pte+5]==inodeindex) then
+			[pte+4] = READY;
+		endif;
+		count = count + 1;
+	endwhile;
+
+	R0 = 0;
+	return;
+endif;
+
+
+//FINAL VERSION
+//if acquire semaphore is called
+if (funcno == 6) then
+	alias currpid R2;
+	alias count R3;
+
+	//check in semaphore table
+	while (count<32) do 
+		if ([SEMAPHORE_TABLE + 4*count + 1] == 0) then
+			break;
+		endif;
+		count = count + 1;
+	endwhile;
+
+	if (count==32) then	//if no semaphore is free
+		R0 = -1;
+		return;
+	endif;
+
+	[SEMAPHORE_TABLE + 4*count] = -1;	//set locking pid to -1
+	[SEMAPHORE_TABLE + 4*count + 1] = 1;	//set process count to 1
+
+	 R0 = count;
+	 return;
+endif;
+
+
+//FINAL VERSION
+//if release semaphore is called
+if (funcno == 7) then
+	alias semindex R2;
+	alias currpid R3;
+
+	if ([SEMAPHORE_TABLE + 4*semindex] == currpid) then
+		[SEMAPHORE_TABLE + 4*semindex] = -1;
+	endif;
+
+	alias count R4;
+	count = 0;
+	while(count<16) do 
+		//check if any process is waiting for this semaphore
+		if ([PROCESS_TABLE+16*count+4]==WAIT_SEMAPHORE && [PROCESS_TABLE+16*count+5]==semindex) then
+			[PROCESS_TABLE + 16*count + 4] = READY;
+		endif;
+		count = count + 1;
+	endwhile;
+
+	//decrease process count
+	[SEMAPHORE_TABLE + 4*semindex + 1] = [SEMAPHORE_TABLE + 4*semindex + 1] - 1;
+
+	return;
+endif;
+
+
+//FINAL VERSION
+//check if acquire terminal function is called
+if (funcno == 8) then  
+	alias currpid R2;
+	while ([TERMINAL_STATUS_TABLE] == 1) do  //repeat until terminal if acquired
+		[PROCESS_TABLE + 16*currpid + 4] = WAIT_TERMINAL;  //change status ofto wait_terminal
+		
+		backup; 
+		call MOD_5;  //calling schedular module
+		restore; 
+	endwhile;
+		
+	[TERMINAL_STATUS_TABLE] = 1;  //set terminal state as acquired
+	[TERMINAL_STATUS_TABLE + 1] = currpid;  //set pid field of terminal status table as curr pid
+
+	return;
+endif;
+
+
+//FINAL VERSION
+//check if release terminal function is called
+if (funcno == 9) then  
+	alias currpid R2;
+	if (currpid != [TERMINAL_STATUS_TABLE + 1]) then  //check if currpid and pid r same
+		R0 = -1; //return -1
+		return;
+	else
+		[TERMINAL_STATUS_TABLE] = 0;  //set terminal state as free
+		alias temppid R3;
+		temppid = 0;
+		while (temppid < 16) do  //update status of all waiting processes as ready
+			if ([PROCESS_TABLE + 16*temppid + 4] == WAIT_TERMINAL) then
+				[PROCESS_TABLE + 16*temppid + 4] = READY;
+			endif;
+				temppid = temppid + 1;
+		endwhile;
+		R0 = 0;
+		return;
+	endif;
+endif;

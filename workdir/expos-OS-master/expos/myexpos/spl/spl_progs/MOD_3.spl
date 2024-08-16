@@ -1,0 +1,210 @@
+
+///////// FILE MANAGER MODULE //////////
+
+alias funcno R1;
+
+
+//FINAL VERSION
+//if buffer read or buffered write is called
+if (funcno == 2 || funcno == 1) then
+	alias blockno R2;
+	alias offset R3;
+	
+	alias word R4;
+
+	alias blkno R6;
+	blkno = blockno;
+
+	alias bufferno R5;
+	bufferno = blockno%4;
+
+	//call acquire buffer in resource manager module
+	backup;
+	R1 = 1;
+	R2 = bufferno;
+	R3 = [SYSTEM_STATUS_TABLE+1];
+	call MOD_0;
+	restore;
+
+	//if the buffer contains a block
+	if ([BUFFER_TABLE + 4*bufferno] != blockno) then
+		//if dirty bit is set
+		if ([BUFFER_TABLE + 4*bufferno + 1] == 1) then
+			//call disk store function in device manager module
+			backup;
+			R1 = 1;
+			R2 = [SYSTEM_STATUS_TABLE+1];
+			R3 = 71 + bufferno;
+			R4 = [BUFFER_TABLE + 4*bufferno];			
+			call MOD_4;
+			restore;
+
+			//set buffer as free
+			[BUFFER_TABLE + 4*bufferno] = -1;
+			[BUFFER_TABLE + 4*bufferno + 1] = -1;
+		endif;
+
+		//call disk load in device manager module
+		backup;
+		R1 = 2;
+		R2 = [SYSTEM_STATUS_TABLE+1];
+		R3 = 71 + bufferno;
+		R4 = blkno;
+		call MOD_4;
+		restore;
+
+
+
+		[BUFFER_TABLE + 4*bufferno] = blockno;	//set the block number in buffr table entry
+	endif;
+
+
+
+
+
+	if (funcno == 2) then	//for buffer read
+		[word] = [(71+bufferno)*512 + offset];	//copy the word
+	else
+		[(71+bufferno)*512 + offset] = word;	//for buffered write
+		[BUFFER_TABLE + 4*bufferno + 1] = 1;
+	endif;
+
+
+	multipush(R1,R2,R3,R4,R5,R6);
+	R1 = 2;
+	R2 = bufferno;
+	R3 = [SYSTEM_STATUS_TABLE+1];
+	call MOD_0;
+	multipop(R1,R2,R3,R4,R5,R6);
+
+
+
+	return;
+endif;
+
+
+
+
+//FINAL VERSION
+//if open function is called
+if (funcno == 3) then
+	alias filename R2;
+	alias count R3;
+	count = 0;
+	//search inode index of the file
+	while(count < MAX_FILE_NUM) do 
+		if( [INODE_TABLE + 16*count + 1] == filename) then
+			break;
+		endif;
+		count = count+1;
+	endwhile;
+
+	//if no found, return -1
+	if (count == MAX_FILE_NUM) then
+		R0 = -1;
+		return;
+	endif;
+
+	alias inodeindex R4;
+	inodeindex = count;
+
+	//call acquire inode in resource manager module
+	multipush(R1,R2,R3,R4);
+	R1 = 4;
+	R2 = inodeindex;
+	R3 = [SYSTEM_STATUS_TABLE + 1];
+	call MOD_0;
+	multipop(R1,R2,R3,R4);
+
+	if(R0 == -1) then
+		return;
+	endif;
+
+	//if file is not data file or file name does not match name entry in inode table
+	if([INODE_TABLE + 16*inodeindex] == EXEC || [INODE_TABLE + 16*inodeindex + 1] != filename) then
+		//call release inode 
+		R1 = 5;
+		R2 = inodeindex;
+		R3 = [SYSTEM_STATUS_TABLE+1];
+		call MOD_0;
+		R0 = -1;
+		return;
+	endif;
+
+	//find free entry in open file table
+	count=0;
+	while(count<32) do 
+		if ([OPEN_FILE_TABLE + 4*count] == -1) then
+			break;
+		endif;
+		count = count+1;
+	endwhile;
+
+	//if no entry is free, return -2
+	if (count == 32) then
+		R0 = -2;
+		return;
+	endif;
+
+	alias openfileindex R5;
+	openfileindex = count;
+
+	if (filename == "root") then	//if file is root, set inodeindex to 0
+		[OPEN_FILE_TABLE + 4*openfileindex + 0] = INODE_ROOT;
+	else
+		[OPEN_FILE_TABLE + 4*openfileindex + 0] = inodeindex;	
+		if ([FILE_STATUS_TABLE + 4*inodeindex + 1] == -1) then	//if file open count is -1, set it to 1
+			[FILE_STATUS_TABLE + 4*inodeindex + 1] = 1;
+		else	//else increment file open count
+			[FILE_STATUS_TABLE + 4*inodeindex + 1] = [FILE_STATUS_TABLE + 4*inodeindex + 1] + 1;
+		endif;
+	endif;
+
+	[OPEN_FILE_TABLE + 4*openfileindex + 1] = 1;	//set open instance count to 1
+	[OPEN_FILE_TABLE + 4*openfileindex + 2] = 0;	//set lseek to 0
+
+	//call release inode
+	backup;
+	R1 = 5;
+	R2 = inodeindex;
+	R3 = [SYSTEM_STATUS_TABLE+1];
+	call MOD_0;
+	restore;
+
+	R0 = openfileindex;	//return open file index
+	return;
+endif;
+
+
+//FINAL VERSION
+//if close function is called
+if (funcno == 4) then
+	alias openfileindex R2;
+	
+	//get inode index for open file table
+	alias inodeindex R3;
+	inodeindex = [OPEN_FILE_TABLE + 4*openfileindex];
+
+	//decrement open instance count
+	[OPEN_FILE_TABLE + 4*openfileindex + 1] = [OPEN_FILE_TABLE + 4*openfileindex + 1] - 1;
+
+	//in open instance count becomes zero
+	if ([OPEN_FILE_TABLE + 4*openfileindex + 1] == 0) then
+		//invalidate the open field entries
+		[OPEN_FILE_TABLE + 4*openfileindex] = -1;
+		[OPEN_FILE_TABLE + 4*openfileindex + 1] = -1;
+		[OPEN_FILE_TABLE + 4*openfileindex + 2] = -1;
+		
+		//if file is not root, decrement open file count in file status table
+		if (inodeindex != INODE_ROOT) then
+			[FILE_STATUS_TABLE + 4*inodeindex + 1] = [FILE_STATUS_TABLE + 4*inodeindex + 1] - 1;
+			//if open file count becomes 0, set it to -1
+			if ([FILE_STATUS_TABLE + 4*inodeindex + 1] == 0) then
+				[FILE_STATUS_TABLE + 4*inodeindex + 1] = -1;
+			endif;
+		endif;
+	endif;
+
+	return;
+
+endif;

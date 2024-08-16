@@ -1,0 +1,19 @@
+int main()
+{
+decl
+	int temp,pid;
+	str command;
+enddecl
+
+begin
+	pid=exposcall("Fork");
+	if(pid==0) then
+		temp=exposcall("Write",-2,"child");
+	else
+		temp=exposcall("Write",-2,"parent");
+		temp=exposcall("Wait",pid);
+	endif;
+
+	return 0;
+end
+}

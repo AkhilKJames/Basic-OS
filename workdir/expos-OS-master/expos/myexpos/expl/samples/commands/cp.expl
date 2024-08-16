@@ -1,0 +1,32 @@
+int main()
+{
+decl
+	int temp, i, filedes1, filedes2;
+	str filename1, filename2, buff;
+enddecl
+
+begin
+	temp = exposcall("Write", -2, "Enter 2 filenames");
+	temp = exposcall("Read", -1, filename1);
+	temp = exposcall("Read", -1, filename2);	
+
+	filedes1 = exposcall("Open", filename1);
+
+	if (filedes1 == -1) then
+		temp = exposcall("Write", -2, "File not found");
+	else
+		temp = exposcall("Create", filename2);
+		filedes2 = exposcall("Open", filename2);
+
+		while (1 == 1) do
+			i = exposcall("Read", filedes1, buff);
+			if (i<0) then
+				break;
+			endif;
+			i = exposcall("Write", filedes2, buff);
+		endwhile;
+	endif;
+
+	return 0;
+end
+}

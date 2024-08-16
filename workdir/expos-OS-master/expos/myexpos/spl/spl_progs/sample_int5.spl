@@ -1,0 +1,210 @@
+//FINAL VERSION
+//////OPEN AND CLOSE SYSTEM CALLS///////
+
+alias usersp R1;
+usersp = SP;
+
+alias pte R10;
+pte = PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1];
+
+//switch to kernel stack
+[pte + 13] = SP;
+SP = [pte + 11]*512 - 1;
+
+//find return address
+alias retadd R2;
+retadd = [PTBR + 2*(usersp - 1)/512]*512 + (usersp-1)%512;
+
+//get the system call number
+alias syscallno R3;
+syscallno = [[PTBR + 2*(usersp - 5)/512]*512 + (usersp-5)%512];
+
+
+//FINAL VERSION
+//open system call
+if (syscallno == 2) then
+	alias filename R4;
+	filename = [[PTBR + 2*(usersp-4)/512]*512 + (usersp-4)%512];
+
+
+	[pte + 9] = 2;	//set mode flag
+	
+	alias count R5;
+	alias userpageno R6;
+	userpageno = [pte + 11];
+	count = 496;
+
+	//find a free per process rescource table entry
+	while(count<512) do 
+		if ([userpageno*512 + count] == -1) then
+			break;
+		endif;
+		count = count + 2;
+	endwhile;
+
+	//if per process resource table is full
+	if (count==512) then
+		[retadd] = -3;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;
+
+	//call open function in file manager module
+	multipush(R1,R2,R3,R4,R5,R6);
+	R1 = 3;
+	R2 = filename;
+	call MOD_3;
+	multipop(R1,R2,R3,R4,R5,R6);
+
+	//if open fails, return
+	if (R0==-1 || R0==-2) then
+		[retadd] = R0;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;
+
+	[userpageno*512 + count] = FILE;	//set resource identifier 
+	[userpageno*512 + count + 1] = R0;	//set index of open file table
+
+
+
+	[pte + 9] = 0;
+	SP = [pte + 13];
+	[retadd] = (count - 496)/2;	//return file descriptor	
+
+	ireturn;
+endif;
+
+
+//FINAL VERSION
+//close system call
+if (syscallno == 3) then
+	alias filedesc R4;
+	filedesc = [[PTBR + 2*(usersp-4)/512]*512 + (usersp-4)%512];
+
+	[pte + 9] = 3;	//set mode flag
+
+	alias userpageno R5;
+	userpageno = [pte + 11];
+
+	//if file descriptor is invalid or no file is present in given index, return -1
+	if(filedesc<0 || filedesc>7 || [userpageno*512 + 496 + 2*filedesc] != FILE) then
+		[retadd]=-1;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;
+
+	alias fileindex R6;
+	fileindex = [userpageno*512 + 496 + 2*filedesc + 1];	//get index of open file table form resource table
+
+	//call close function in file manager module
+	backup;
+	R1 = 4;
+	R2 = fileindex;
+	call MOD_3;
+	restore;
+
+	[userpageno*512 + 496 + 2*filedesc] = -1;	//invalidate per process resource table
+
+	
+	[pte + 9] = 0;
+	[retadd] = 0;
+	SP = [pte + 13];
+	ireturn;
+endif;
+
+//FINAL VERSION
+//seek system call
+if (syscallno == 6) then
+
+	[pte + 9] = 6;
+
+	alias filedesc R4;
+	filedesc = [[PTBR + 2*(usersp-4)/512]*512 + (usersp-4)%512];
+
+	alias offset R5;
+	offset = [[PTBR + 2*(usersp-3)/512]*512 + (usersp-3)%512];
+
+
+
+	alias userpageno R6;
+	userpageno = [pte + 11];
+
+	//if file descriptor is invalid or no file is present in given index, return -1
+	if(filedesc<0 || filedesc>7 || [userpageno*512 + 496 + 2*filedesc] != FILE) then
+		[retadd]=-1;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;
+
+	alias fileindex R7;
+	fileindex = [userpageno*512 + 496 + 2*filedesc + 1];	//get index of open file table form resource table
+
+	alias inodeindex R8;
+	inodeindex = [OPEN_FILE_TABLE + 4*fileindex];
+
+
+	//call acquire inode in resource manager module
+	multipush(R1,R2,R3,R4,R5,R6,R7,R8);
+	R1 = 4;
+	R2 = inodeindex;
+	R3 = [SYSTEM_STATUS_TABLE+1];
+	call MOD_0;
+	multipop(R1,R2,R3,R4,R5,R6,R7,R8);
+
+	//if acquire inode fails, return -1
+	if (R0 == -1) then
+		[retadd] = -1;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;		
+
+	alias lseek R9;
+	lseek = [OPEN_FILE_TABLE + 4*fileindex + 2];
+
+
+	//if lseek + given offset is less than 0, return -2
+	if ((lseek+offset) < 0) then
+		//call release inode
+		backup;
+		R1 = 5;
+		R2 = inodeindex;
+		R3 = [SYSTEM_STATUS_TABLE+1];
+		call MOD_0;
+		restore;
+		
+		[retadd] = -2;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;				
+
+	if (offset == 0) then	//if offset is zero, set lseek to 0
+		[OPEN_FILE_TABLE + 4*fileindex + 2] = 0;
+	else//if lseek + offset is grater than filesize , set lseek to filesize
+	if (lseek+offset > [INODE_TABLE + 16*inodeindex + 2]) then	
+		[OPEN_FILE_TABLE + 4*fileindex + 2] = [INODE_TABLE + 16*inodeindex + 2];
+	else//else set lseek to lseek+offset
+		[OPEN_FILE_TABLE + 4*fileindex + 2] = [OPEN_FILE_TABLE + 4*fileindex + 2] + offset;
+	endif;
+	endif;
+
+	//call release inode
+	backup;
+	R1 = 5;
+	R2 = inodeindex;
+	R3 = [SYSTEM_STATUS_TABLE+1];
+	call MOD_0;
+	restore;
+
+	[retadd] = 0;
+	[pte + 9] = 0;
+	SP = [pte + 13];
+
+	ireturn;
+endif;

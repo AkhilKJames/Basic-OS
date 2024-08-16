@@ -1,0 +1,89 @@
+//FINAL VERSION
+//////LOGIN SYSTEM CALL///////
+
+alias usersp R1;
+usersp = SP;
+
+//switch to kernel stack
+[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13] = SP;
+SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 11]*512 - 1;
+
+//find return address
+alias retadd R2;
+retadd = [PTBR + 2*(usersp - 1)/512]*512 + (usersp-1)%512;
+
+//get the system call number
+alias syscallno R3;
+syscallno = [[PTBR + 2*(usersp - 5)/512]*512 + (usersp-5)%512];
+
+//login system call
+if (syscallno == 27) then
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 27;
+
+
+	//if the calling process is not root, return -2
+	if ([PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 1] != 1) then
+		[retadd] = -2;
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+		SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+		ireturn;
+	endif;
+
+	alias username R4;
+	username = [[PTBR + 2*(usersp-4)/512]*512 + (usersp-4)%512];	
+
+	alias pswd R5;
+	pswd = [[PTBR + 2*(usersp-3)/512]*512 + (usersp-3)%512];
+
+
+	//find userindex in USER TABLE
+	alias userindex R6;
+	userindex = 0;
+	while (userindex<16) do 
+		if ([USER_TABLE + 2*userindex] == username) then
+			break;
+		endif;
+		userindex = userindex+1;
+	endwhile;
+
+	//if user is not found, return -1
+	if (userindex==16) then
+		[retadd] = -1;
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+		SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+		ireturn;
+	endif;
+
+
+	encrypt pswd;	//encrypt the password
+
+	//if the encrypted password does not match in user table, return -1
+	if (pswd != [USER_TABLE + 2*userindex + 1]) then
+		[retadd] = -1;
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+		SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+		ireturn;
+	endif;
+
+	[PROCESS_TABLE + 16*2 + 4] = CREATED;	//set state of shell process as created
+	[PROCESS_TABLE + 16*2 + 3] = userindex;	//set userid
+
+	//set state of current process(root) as waiting for shell
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 4] = WAIT_PROCESS;
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 5] = 2;
+
+
+	//invoke scheduler
+	backup;
+	call MOD_5;
+	restore;
+
+
+	[retadd] = 0;
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+	SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+
+
+
+	ireturn;
+endif;

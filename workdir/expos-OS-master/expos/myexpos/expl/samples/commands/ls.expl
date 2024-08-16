@@ -1,0 +1,24 @@
+int main()
+{
+decl
+	int temp, i, rootdes;
+	str filename, buff;
+enddecl
+
+begin
+	rootdes = exposcall("Open","root");
+
+	i = 0;
+	while (i<60) do 
+		temp = exposcall("Read",rootdes,buff);
+		if (buff != "-1") then
+			temp = exposcall("Write", -2, buff);
+		endif;
+		temp = exposcall("Seek", rootdes, 7);
+		i = i + 1;
+	endwhile;
+
+	return 0;
+end
+
+}

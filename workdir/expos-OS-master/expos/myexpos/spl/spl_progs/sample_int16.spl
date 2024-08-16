@@ -1,0 +1,222 @@
+//FINAL VERSION
+//////NEWUSR, REMUSR, SETPWD, GETUNAME, GETUID SYSTEM CALL///////
+
+alias usersp R1;
+usersp = SP;
+
+alias currpid R7;
+currpid = [SYSTEM_STATUS_TABLE+1];
+
+alias pte R8;
+pte = PROCESS_TABLE + 16*currpid;
+
+
+
+
+//switch to kernel stack
+[pte + 13] = SP;
+SP = [pte + 11]*512 - 1;
+
+//find return address
+alias retadd R2;
+retadd = [PTBR + 2*(usersp - 1)/512]*512 + (usersp-1)%512;
+
+//get the system call number
+alias syscallno R3;
+syscallno = [[PTBR + 2*(usersp - 5)/512]*512 + (usersp-5)%512];
+
+//new user system call
+if (syscallno == 22) then
+	[pte + 9] = 22;
+	
+	//if current user is not root or current process is not shell, return -2
+	if ([pte + 3]!=1 || currpid!=2) then
+		[retadd] = -2;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;
+
+	alias username R4;
+	username = [[PTBR + 2*(usersp-4)/512]*512 + (usersp-4)%512];	
+
+	alias userindex R6;
+	userindex=0;
+	while (userindex<16) do 
+		//if user already exists, return -1
+		if ([USER_TABLE + 2*userindex] == username) then
+			[retadd] = -1;
+			[pte + 9] = 0;
+			SP = [pte + 13];
+			ireturn;
+		endif;
+		userindex = userindex+1;
+	endwhile;
+
+	//find free entry in user table
+	userindex=0;
+	while (userindex<16) do 
+		if ([USER_TABLE + 2*userindex] == -1) then
+			break;
+		endif;
+		userindex = userindex+1;
+	endwhile;
+
+	//if no entry exists, return -3
+//	if (userindex == 16) then
+//		[retadd] = -3;
+//		[pte + 9] = 0;
+//		SP = [pte + 13];
+//		ireturn;
+//	endif;
+
+	alias pswd R5;
+	pswd = [[PTBR + 2*(usersp-3)/512]*512 + (usersp-3)%512];
+
+	encrypt pswd;
+
+	//set username and password(encrypted) in user table
+	alias ute R10;
+	ute = USER_TABLE + 2*userindex;
+	[ute] = username;
+	[ute + 1] = pswd;
+
+endif;
+
+//remove user system call
+if (syscallno == 23) then
+	[pte + 9] = 23;
+
+	alias username R4;
+	username = [[PTBR + 2*(usersp-4)/512]*512 + (usersp-4)%512];	
+
+	//if user to be removed is root or kernel,or current user is not root or curr process is not shell, return -2
+	if (username=="root" || username=="kernel" || [pte+3]!=1) then
+		[retadd] = -2;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;
+
+	//find entry corresponding to the username
+	alias userindex R5;
+	userindex=0;
+	while (userindex<16) do 
+		if ([USER_TABLE + 2*userindex] == username) then
+			break;
+		endif;
+		userindex = userindex+1;
+	endwhile;
+
+	//if user is not found, return -1
+	if (userindex==16) then
+		[retadd] = -1;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;
+
+
+	//loop through root file and check if there are any files of current user; if yes, return -3
+	alias count R6;
+	count = 0;
+	while (count < MAX_FILE_NUM) do 
+		if ([ROOT_FILE + 8*count]!=-1 && [ROOT_FILE + 8*count + 3]==username) then
+			[retadd] = -3;
+			[pte + 9] = 0;
+			SP = [pte + 13];
+			ireturn;
+		endif;
+		count = count + 1;
+	endwhile;
+
+	//invalidate user table entry
+	[USER_TABLE + 2*userindex] = -1;
+	[USER_TABLE + 2*userindex + 1] = -1;
+endif;
+
+
+//set password system call
+if (syscallno == 24) then
+	[pte + 9] = 24;
+	
+	alias username R4;
+	username = [[PTBR + 2*(usersp-4)/512]*512 + (usersp-4)%512];
+
+	//find entry corresponding to the username
+	alias userindex R5;
+	userindex=0;
+	while (userindex<16) do 
+		if ([USER_TABLE + 2*userindex] == username) then
+			break;
+		endif;
+		userindex = userindex+1;
+	endwhile;
+
+	//if user is not found or curr process is not shell or curr usr is not root and the userindex ,return -1
+	if (userindex==16 || currpid!=2 || ([pte+3]!=userindex&&[pte+3]!=1) ) then
+		[retadd] = -1;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;		
+
+	alias pswd R6;
+	pswd = [[PTBR + 2*(usersp-3)/512]*512 + (usersp-3)%512];
+
+	encrypt pswd;
+
+	[USER_TABLE + 2*userindex + 1] = pswd;
+
+endif;
+
+
+//get user name system call
+if (syscallno == 25) then
+	[pte + 9] = 25;
+
+	alias userindex R4;
+	userindex = [[PTBR + 2*(usersp-4)/512]*512 + (usersp-4)%512];
+
+	//if userindex is not valid or entry is invalid return -1
+	if (userindex<0 || userindex>15 || [USER_TABLE+2*userindex]==-1) then
+		[retadd] = -1;
+		[pte + 9] = 0;
+		SP = [pte + 13];
+		ireturn;
+	endif;
+
+
+	[retadd] = [USER_TABLE + 2*userindex];	//return the username
+
+	[pte + 9] = 0;
+	SP = [pte + 13];
+	ireturn;
+endif;
+
+//get user index system call
+if (syscallno == 26) then
+	[pte + 9] = 	26;
+
+	alias username R4;
+	username = [[PTBR + 2*(usersp-4)/512]*512 + (usersp-4)%512];
+
+	//find entry corresponding to the username and return it
+	alias userindex R5;
+	userindex=0;
+	while (userindex<16) do 
+		if ([USER_TABLE + 2*userindex] == username) then
+			[retadd] = userindex;
+			[pte + 9] = 0;
+			SP = [pte + 13];
+			ireturn;
+		endif;
+		userindex = userindex+1;
+	endwhile;
+
+	[retadd] = -1;
+endif;
+
+[pte + 9] = 0;
+SP = [pte + 13];
+ireturn;

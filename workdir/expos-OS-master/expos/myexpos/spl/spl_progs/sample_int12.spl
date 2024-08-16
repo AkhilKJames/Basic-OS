@@ -1,0 +1,59 @@
+//FINAL VERSION
+//////LOGOUT SYSTEM CALL///////
+
+alias usersp R1;
+usersp = SP;
+
+//switch to kernel stack
+[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13] = SP;
+SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 11]*512 - 1;
+
+//find return address
+alias retadd R2;
+retadd = [PTBR + 2*(usersp - 1)/512]*512 + (usersp-1)%512;
+
+//get the system call number
+alias syscallno R3;
+syscallno = [[PTBR + 2*(usersp - 5)/512]*512 + (usersp-5)%512];
+
+//logout system call
+if (syscallno == 28) then
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 28;
+
+	//if current process is not shell, return -1
+	if ([SYSTEM_STATUS_TABLE+1] != 2) then
+		[retadd] = -1;
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+		SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+		ireturn;
+	endif;
+
+	//call killall function in process manager module
+	backup;
+	R1 = 5;
+	R2 = [SYSTEM_STATUS_TABLE+1];
+	call MOD_1;
+	restore;
+
+	//set state of current process(shell) as terminated
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 4] = TERMINATED;
+
+	//calculate entry ip from header of shell program
+	alias entryip R4;
+	entryip = [[PAGE_TABLE_BASE + 20*[SYSTEM_STATUS_TABLE+1] + 8]*512 + 1];
+
+	//place entry ip on top of stack
+	[[PAGE_TABLE_BASE + 20*[SYSTEM_STATUS_TABLE+1] + 16]*512] = entryip;
+
+	//set state of login process to ready
+	[PROCESS_TABLE + 16*1 + 4] = READY;
+
+	//invoke scheduler
+	backup;
+	call MOD_5;
+	restore;
+
+	[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+	SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+	ireturn;
+endif;

@@ -1,0 +1,19 @@
+//final version
+////////EXIT SYSTEM CALL//////////
+
+//set mode flag to 10
+[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 9] = 10;
+
+//switch to kernel mode
+[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13] = SP;
+SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 11]*512 - 1;
+
+//call exit process
+backup;
+R1 = 3;
+R2 = [SYSTEM_STATUS_TABLE + 1];
+call MOD_1;
+restore;
+
+//invoke scheduler
+call MOD_5;

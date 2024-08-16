@@ -1,0 +1,30 @@
+int main() 
+{
+decl
+	int temp,i,filedesc;
+	str filename,buff;
+enddecl
+
+begin
+	filedesc = exposcall("Open","a.dat");
+
+	temp = exposcall("Seek",filedesc,2500);
+
+	i = 2000;
+	while (i<=2513) do
+
+		temp = exposcall("Write",filedesc,i);
+		i=i+1;
+	endwhile;
+	temp = exposcall("Seek",filedesc,-1);
+
+	i = 0;
+	while (i<513) do 
+		i = i+1;
+		temp = exposcall("Read",filedesc,buff);
+		temp = exposcall("Seek",filedesc,-2);
+		temp = exposcall("Write",-2,buff);
+	endwhile;
+	return 0;
+end
+}

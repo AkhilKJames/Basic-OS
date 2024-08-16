@@ -1,0 +1,99 @@
+
+////////SCHEDULER//////////
+
+//getting current process id
+alias currpid R0;
+currpid = [SYSTEM_STATUS_TABLE + 1];
+
+multipush (BP);
+//sving pprocess context
+alias cpte R1;
+cpte = PROCESS_TABLE + 16*currpid;
+[cpte + 12] = SP%512;
+[cpte + 14] = PTBR;
+[cpte + 15] = PTLR;
+
+//switching process
+alias temppid R2;
+alias pte R3;
+alias npte R4;
+alias newpid R5;
+alias count R6;
+temppid=currpid;
+
+//if all processes are terminated, halt the system
+count = 1;
+while (count<16) do 
+	if ([PROCESS_TABLE + 16*count + 4] != TERMINATED) then
+		
+	//	print [PROCESS_TABLE + 16*count + 1];
+		break;
+	endif;
+	count = count + 1;
+endwhile;
+
+if (count == 16) then
+	halt;
+endif;
+
+
+//find next process to be scheduled
+alias paging_proc R7;
+paging_proc = [SYSTEM_STATUS_TABLE+5];
+if (paging_proc != -1) then
+	if ([PROCESS_TABLE + 16*paging_proc + 4]!=READY && [PROCESS_TABLE + 16*paging_proc + 4]!=RUNNING) then
+		newpid = 0;
+	else
+		newpid = paging_proc;
+	endif;
+else
+	count = 1;
+	while(count<=15) do
+		if(temppid<15) then
+			temppid=temppid+1;
+		else
+			temppid=1;
+		endif;	
+		pte = PROCESS_TABLE + 16*temppid;
+		if(([pte+4]==READY || [pte+4]==CREATED)  &&  [pte+6]==0) then
+			newpid=temppid;
+			break;
+		endif;
+		count = count + 1;
+	endwhile;
+endif;
+
+//print (newpid);
+
+//if no other process is ready,schedule idle process 
+if(count == 16) then
+	newpid = 0;
+endif;
+
+
+//restoring process context
+npte = PROCESS_TABLE + 16*newpid;
+SP = [npte + 11]*512 + [npte+12];
+PTBR = [npte + 14];
+PTLR = [npte+15];
+
+//changing current process
+[SYSTEM_STATUS_TABLE+1]=newpid;
+
+
+//print "TIMER";
+
+if([npte+4] == CREATED) then
+
+	BP = [[npte + 11]*512];	//store first word of kernel stack to BP
+	[npte+4]= RUNNING;	//set state as running
+	SP = [npte+13];	//siwtch to user stack
+	[npte+9]=0;	//set mode to zero
+	ireturn;
+endif;
+
+
+
+[npte+4]=RUNNING;
+multipop (BP);
+return;

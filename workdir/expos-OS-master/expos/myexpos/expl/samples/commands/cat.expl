@@ -1,0 +1,11 @@
+int main()
+{
+decl
+	int temp;
+enddecl
+
+begin
+	temp = exposcall("Exec","f_read.xsm");
+	return 0;
+end
+}

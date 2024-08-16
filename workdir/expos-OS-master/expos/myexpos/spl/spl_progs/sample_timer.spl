@@ -1,0 +1,54 @@
+//FINAL VERSION
+///////// TIMER INTERRUPT /////////
+
+[PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16)+13] = SP;
+SP = [PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16)+11]*512-1;
+
+backup;
+
+//print [SYSTEM_STATUS_TABLE+1];
+
+//if current process is not idle process
+if ([SYSTEM_STATUS_TABLE+1] != 0) then
+	//if MEM_FREE_COUNT is less than MEM_LOW
+	if ([SYSTEM_STATUS_TABLE+2] < MEM_LOW) then
+		//print ([SYSTEM_STATUS_TABLE+2]);
+		//call SWAP OUT function in pager module
+		backup;
+		R1 = 1;
+		R2 = [SYSTEM_STATUS_TABLE+1];
+		call MOD_6;
+		restore;
+	else
+	if ([SYSTEM_STATUS_TABLE+2] > MEM_HIGH) then
+		//print ([SYSTEM_STATUS_TABLE+2]);
+		//call SWAP IN function in pager module
+		backup;
+		R1 = 2;
+		R2 = [SYSTEM_STATUS_TABLE+1];
+		call MOD_6;
+		restore;
+	endif;
+	endif;
+endif;
+
+//changing current process state
+[PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16)+4] = READY;
+
+//loop through process table and increment tick field of each process
+alias count R1;
+count = 0;
+while (count<16) do
+	[PROCESS_TABLE + 16*count] = [PROCESS_TABLE + 16*count] + 1;
+	count = count + 1;
+endwhile;
+
+//call context switch module
+call MOD_5;
+
+restore;
+
+SP = [PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16)+13];
+[PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16)+9]=0;
+
+ireturn;

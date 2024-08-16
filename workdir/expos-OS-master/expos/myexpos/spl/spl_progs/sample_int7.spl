@@ -1,0 +1,190 @@
+//FINAL VERSION
+////////WRITE SYSTEM CALL//////////
+
+//set mode flag of cureent process to 5(write system call)
+[PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16) + 9] = 5;
+
+//save user stack pointer
+alias usersp R1;
+usersp = SP;
+
+//change to kernel stack
+[PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16) + 13] = SP;
+SP = [PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16) + 11]*512 - 1;
+
+//accessing the file descriptor
+alias filedesc R2;
+filedesc = [[PTBR + 2*(usersp - 4)/512]*512 + (usersp-4)%512];
+
+//finding the return address
+alias retadd R3;
+retadd = [PTBR + 2*(usersp - 1)/512]*512 + (usersp-1)%512;
+
+//find word to be written
+alias word R4;
+word = [(([PTBR + 2*(usersp-3)/512])*512) + ((usersp - 3)%512)];
+
+
+
+
+//checking whether file descriptor is valid or not
+if(filedesc == -2) then
+
+	//call terminal write function in device manager module
+	multipush (R1,R2,R3,R4,R5); 
+	R1 = 3;
+	R2 = [SYSTEM_STATUS_TABLE + 1];
+	R3 = word;
+	call MOD_4;  
+	multipop(R1,R2,R3,R4,R5);
+	[retadd]=R0;
+
+
+else
+
+	alias userpageno R5;
+	userpageno = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 11];
+	
+
+	//if file descriptor is invalid or resource entry is not valid, return -1
+	if (filedesc<0 || filedesc>7 || [userpageno*512 + 496 + 2*filedesc] != FILE) then
+		[retadd] = -1;
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+		SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+		ireturn;
+	endif;
+
+
+
+	//get the index of open file table
+	alias fileindex R6;
+	fileindex = [userpageno*512 + 496 + 2*filedesc + 1];
+
+	//get inode index
+	alias inodeindex R7;
+	inodeindex = [OPEN_FILE_TABLE + 4*fileindex];
+
+	//if user id of file is not equal to user id of current user and exclusive permission is set, return -1
+	if([INODE_TABLE+16*inodeindex+3]!=[PROCESS_TABLE+16*[SYSTEM_STATUS_TABLE+1]+3] && [INODE_TABLE+16*inodeindex+4]==0) then
+		[retadd] = -3;
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+		SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+		ireturn;
+	endif;		
+
+
+
+	//call acquire inode in resource manager module
+	multipush(R1,R2,R3,R4,R5,R6,R7);
+	R1 = 4;
+	R2 = inodeindex;
+	R3 = [SYSTEM_STATUS_TABLE+1];
+	call MOD_0;
+	multipop(R1,R2,R3,R4,R5,R6,R7);
+
+	//if acquire inode fails, return -1
+	if (R0 == -1) then
+		[retadd] = -1;
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+		SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+		ireturn;
+	endif;		
+
+	alias lseek R8;
+	lseek = [OPEN_FILE_TABLE + 4*fileindex + 2];
+
+
+
+	//if lseek has reached the maximum file size, return -2
+	if(lseek == MAX_FILE_SIZE) then
+		[retadd] = -2;
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 9] = 0;
+		SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE+1] + 13];
+		ireturn;	
+	endif;				
+
+
+
+	//if lseek is a multiple of 512 and lseek is equal to the size of file
+	if (lseek%512==0 && lseek==[INODE_TABLE + 16*inodeindex + 2]) then
+		//call get free block in memory manager module
+		multipush (R1,R2,R3,R4,R5,R6,R7,R8);
+		R1 = 3;
+		call MOD_2;
+		multipop (R1,R2,R3,R4,R5,R6,R7,R8);
+
+		alias blockno R9;
+		blockno = R0;
+
+		if (blockno==-1) then
+			//call release inode
+			backup;
+			R1 = 5;
+			R2 = inodeindex;
+			R3 = [SYSTEM_STATUS_TABLE+1];
+			call MOD_0;
+			restore;
+			//return -2
+			[retadd] = -2;
+			[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 9] = 0;
+			SP = [PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 13];
+			ireturn;
+		endif;
+
+		//set the inode entry for the new block allocated
+		[INODE_TABLE + 16*inodeindex + 8 + lseek/512] = blockno;
+	endif;
+
+	alias blockindex R9;
+	alias blockno R10;
+	alias offset R11;
+
+	blockindex = lseek/512;
+	blockno = [INODE_TABLE + 16*inodeindex + 8 + blockindex];
+	offset = lseek%512;
+
+
+
+	//call buffered write in file manager module
+	backup;
+	R1 = 1;
+	R2 = blockno;
+	R3 = offset;
+	R4 = word;
+	call MOD_3;
+	restore;
+
+	//if lseek is equal to file size, increment file size in inode table and root file 
+	if (lseek == [INODE_TABLE + 16*inodeindex + 2]) then
+		[INODE_TABLE + 16*inodeindex + 2] = [INODE_TABLE + 16*inodeindex + 2] + 1;
+		[ROOT_FILE + 8*inodeindex + 1] = [ROOT_FILE + 8*inodeindex + 1] + 1;
+	endif;
+
+	//increment lseek value in open file table
+	[OPEN_FILE_TABLE + 4*fileindex + 2] = [OPEN_FILE_TABLE + 4*fileindex + 2] + 1;
+
+	//call release inode
+	backup;
+	R1 = 5;
+	R2 = inodeindex;
+	R3 = [SYSTEM_STATUS_TABLE+1];
+	call MOD_0;
+	restore;
+
+	[retadd] = 0;
+endif;
+
+
+//changing back to user stack
+SP = usersp;
+
+//reset mode flag (0 indicates process is in user mode).
+[PROCESS_TABLE + ([SYSTEM_STATUS_TABLE - 1]*16) + 9] = 0;
+
+
+if (word=="2048") then
+	breakpoint;
+endif;
+
+//return transfer to user program
+ireturn;

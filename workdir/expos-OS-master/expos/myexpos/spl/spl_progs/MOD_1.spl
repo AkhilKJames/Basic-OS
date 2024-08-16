@@ -1,0 +1,217 @@
+//FINAL VERSION
+////////PROCESS MANAGER MODULE//////////
+
+alias funcno R1;
+alias currpid R2;
+
+//FINAL VERSION
+//if get pcb entry function is called
+if (funcno == 1) then	
+	alias pid R0;
+	pid=0;
+	while (pid < 16) do 
+		if ([PROCESS_TABLE + 16*pid + 4] == TERMINATED) then	//if free entry is found
+			[PROCESS_TABLE + 16*pid + 1] = pid;	//set pid field
+			[PROCESS_TABLE + 16*pid + 14] = PAGE_TABLE_BASE + 20*pid;	//set PTBR field
+			[PROCESS_TABLE + 16*pid + 15] = 10;	//set PTLR field
+			[PROCESS_TABLE + 16*pid + 4] = ALLOCATED;
+			return;	//return with value pid
+		endif;
+		pid = pid + 1;
+	endwhile;
+	R0 = -1;	//if no free process is found, return -1
+	return;
+endif;
+
+//FINAL VERSION
+//if function number corresponds to free user area page function
+if (funcno == 2) then	
+	alias userpageno R3;
+	userpageno = [PROCESS_TABLE + 16*currpid + 11];
+
+
+	//if any reource is a semaphore, release it
+	alias count R4;
+	count = 496;
+	while(count<512) do 
+		if ([userpageno*512 + count] == SEMAPHORE) then
+			//call release semaphore in resource manager module 
+			backup;
+			R1 = 7;
+			R2 = [userpageno*512 + count + 1];
+			R3 = currpid;
+			call MOD_0;
+			restore;
+		endif;
+
+		if ([userpageno*512 + count] == FILE) then
+			//call close function in file maanger function
+			backup;
+			R1 = 4;
+			R2 = [userpageno*512 + count + 1];
+			call MOD_3;
+			restore;
+		endif;
+		count = count + 2;
+	endwhile;
+
+	
+
+	//call release page function
+	backup;
+	R1 = 2;	
+	R2 = userpageno;
+	call MOD_2;	//calling memory manager module for release page function
+	restore;
+	return;
+endif;
+
+//final version
+//if function number corresponds to exit function
+if (funcno == 3) then	
+
+
+	//call free page table function
+	backup;
+	R1 = 4;
+	R2 = currpid;
+	call MOD_1;
+	restore;
+
+	//call free user area page function
+	backup;
+	R1 = 2;
+	R2 = currpid;
+	call MOD_1;
+	restore;
+
+
+	//set state as terminated
+	[PROCESS_TABLE + 16*currpid + 4] = TERMINATED;
+
+	//if exit process is not called by exec system call
+	if ([PROCESS_TABLE +  16*currpid + 9] != 9) then
+		alias count R5;
+		count = 0;
+
+		//loop through all processes
+		while (count<16) do 
+			alias cpte R6;
+			cpte = PROCESS_TABLE + 16*count;
+			//if process with id count is waiting for curr process,change state to ready
+			if ([cpte + 4]==WAIT_PROCESS && [cpte + 5]==currpid) then
+				
+				[cpte + 4] = READY;
+			endif;
+			//if process with id count has parent as curr process,change parent as -1
+			if ([cpte + 2]==currpid) then
+				[cpte + 2] = -1;
+			endif;
+			count = count + 1;
+		endwhile;
+	endif;
+	return;
+endif;
+
+//final version
+//if function number corresponds to free page table function	
+if (funcno == 4) then 
+	//invalidate library
+	[PAGE_TABLE_BASE + 20*currpid + 0] = -1;
+	[PAGE_TABLE_BASE + 20*currpid + 1] = "0000";
+	[PAGE_TABLE_BASE + 20*currpid + 2] = -1;
+	[PAGE_TABLE_BASE + 20*currpid + 3] = "0000";
+
+	backup;
+	alias count R6;
+	count = 4;
+	//release pages
+	while (count < 20) do
+		if ([PAGE_TABLE_BASE + 20*currpid + count] != -1) then
+
+			//call release page function
+			backup;
+			R1 = 2;
+			R2 = [PAGE_TABLE_BASE + 20*currpid + count];
+			call MOD_2;
+			restore;
+
+			//invalidate page table entries
+			[PAGE_TABLE_BASE + 20*currpid + count] = -1;
+			[PAGE_TABLE_BASE + 20*currpid + count + 1] = "0000";
+		endif;
+		count = count + 2;
+	endwhile;
+	restore;
+
+	backup;
+	alias temp R5;
+	alias diskmap R7;
+	diskmap = DISK_MAP_TABLE + 10*currpid;
+	temp = 0;
+	//check if any heap or stack entries of disk map table are valid,if valid call release block func
+	while (temp<10) do
+		if (([diskmap + temp]!= -1) && (temp==2 || temp==3 || temp==8 || temp==9)) then
+			//call release block function
+			backup;
+			R1 = 4;
+			R2 = [diskmap + temp];
+			call MOD_2;
+			restore;
+		endif;
+		[diskmap + temp] = -1;
+		temp = temp + 1; 
+	endwhile;
+	restore;
+
+	return;
+endif;
+
+//FINAL VERSION
+//kill all function
+if (funcno == 5) then
+	alias count R3;
+	count = 0;
+	
+	//for each valid entry in inode table, call acquire inode from resource manager module
+	while (count<MAX_FILE_NUM) do 
+		if ([INODE_TABLE + 16*count + 1] != -1) then
+			backup;
+			R1 = 4;
+			R2 = count;
+			R3 = [SYSTEM_STATUS_TABLE + 1];
+			call MOD_0;
+			restore;
+		endif;
+		count = count+1;
+	endwhile;
+
+	//for each process except idle and init and current process, call exit function form process module
+	count = 2;
+	while (count<16) do
+		if (count!=[SYSTEM_STATUS_TABLE+1] && [PROCESS_TABLE+16*count+4]!=TERMINATED) then
+			backup;
+			R1 = 3;
+			R2 = count;
+			call MOD_1;
+			restore;
+		endif;
+		count=count+1;
+	endwhile;
+
+	count = 0;
+	//for each valid entry in inode table, call release inode from resource manager module
+	while (count<MAX_FILE_NUM) do 
+		if ([INODE_TABLE + 16*count + 1] != -1) then
+			backup;
+			R1 = 5;
+			R2 = count;
+			R3 = [SYSTEM_STATUS_TABLE + 1];
+			call MOD_0;
+			restore;
+		endif;
+		count = count+1;
+	endwhile;	
+
+	return;
+endif;
