@@ -1,4 +1,4 @@
-# Learn-OS
+# OS
 An Operating System for a string machine. For documentation, visit [expos nitc](http://exposnitc.github.io)
 
 ## Pre-Requisite
